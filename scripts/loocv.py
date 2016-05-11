@@ -4,8 +4,8 @@ import numpy as np
 from time import time
 import cPickle
 import pyspark
-from sklearn.cross_validation import train_test_split
-from sklearn.cross_validation import KFold, StratifiedKFold
+#from sklearn.cross_validation import train_test_split
+from sklearn.cross_validation import  StratifiedShuffleSplit
 from sklearn.utils import shuffle
 from collections import defaultdict, Counter
 
@@ -19,7 +19,7 @@ def get_ratings_data():
     ratings_data = cPickle.load(open(spark_ready_data_path, "r"))
     return ratings_data
 
-def create_cust_tag_bridge_rdd(data, sc):
+def create_cust_tag_bridge_rdd(sc, data):
     # create int:cust_tag key value pairs
     # spark can't read string user ids
     
@@ -31,7 +31,7 @@ def create_cust_tag_bridge_rdd(data, sc):
     return sc.parallelize(cust_tag_bridge)
 
 
-def create_clean_data_rdd(data, cust_tag_bridge_rdd):
+def create_clean_data_rdd(sc, data, cust_tag_bridge_rdd):
     # create bride rdd for customer tags and customer ids
     data_rdd = sc.parallelize(data)
     
@@ -61,7 +61,7 @@ def split_data(data_rdd):
 
 # Global split - train/test sets with proportinal label distribution
 # (y, n_iter=10, test_size=0.1, train_size=None, random_state=None
-def get_loocv_train_test_errors(sc, alpha, rank_ , n_iterations, file_path=None, save_file=False):
+def get_loocv_train_test_errors(sc, X, Y , alpha, rank_ , n_iterations, file_path=None, save_file=False, return_errors=True):
     
     def predict_get_error(model, data, data_predict):
         # (r[0], r[1]), r[2]) --> user_id, wine_id, rating 
@@ -72,25 +72,18 @@ def get_loocv_train_test_errors(sc, alpha, rank_ , n_iterations, file_path=None,
                                         .join(predictions)
         # get RMSE for each rank
         error = math.sqrt(rates_and_preds.map(lambda r: (r[1][0] - r[1][1])**2).mean())
+
+        rates_and_preds.unpersist()
+        predictions.unpersist()
     
         return error
-    
-    # load data
-    print "load data..."
-    data = get_ratings_data()
-    print "build RDDs..."
-    cust_tag_bridge_rdd = create_cust_tag_bridge_rdd(data, sc)
-    clean_data_rdd = create_clean_data_rdd(data, cust_tag_bridge_rdd) 
-    X, Y = split_data(clean_data_rdd)
+
 
     # sub-sample
-    #initial = 0
-    #final = 2000000
-    #X_sub, Y_sub = X[initial:final], Y[initial:final]
+    initial = 0
+    final = 1000000
+    X, Y = X[initial:final], Y[initial:final]
     
-    print "unpersisting initial data RDDs..."
-    cust_tag_bridge_rdd.unpersist()
-    clean_data_rdd.unpersist()
     
     seed = 5L
     iterations = n_iterations
@@ -100,10 +93,17 @@ def get_loocv_train_test_errors(sc, alpha, rank_ , n_iterations, file_path=None,
     train_errors = []
     test_errors = []
 
-    for i, global_test_size in enumerate(global_test_sizes):
+    X = np.array(X)
+    Y = np.array(Y)
+
+    for i, test_size_ in enumerate(global_test_sizes):
         
         print "Iteration {}".format(i)
 
+        # sss = StratifiedShuffleSplit(Y, n_iter=1, test_size=test_size_, random_state=4)
+        # for train, test in sss:
+        #     X_train, y_train = X[train], Y[train]
+        #     X_test, y_test = X[test], Y[test]
         
         X_train, X_test, y_train, y_test = train_test_split(X, 
                                                             Y, 
@@ -143,10 +143,13 @@ def get_loocv_train_test_errors(sc, alpha, rank_ , n_iterations, file_path=None,
         print "Saving results to file...."
         cPickle.dump([train_errors, test_errors], open(file_path, 'w'))
 
+    if return_errors == True:
+        return train_errors, test_errors
+
 
 if __name__ == '__main__':
 
-    loocv_path = "/Users/Alexander/Wine_Recommender/data/loocv_results.pkl"
+    loocv_path = "/Users/Alexander/Wine_Recommender/data/loocv_results_test.pkl"
 
     print "create sparkContext..."
     # number of nodes in local spark cluster
@@ -154,7 +157,20 @@ if __name__ == '__main__':
     sc = pyspark.SparkContext(master = "local[{}]".format(n_nodes))
     print "SparkContext: {}".format(sc)
 
-    get_loocv_train_test_errors(sc, alpha = 0.1, rank_ = 16, n_iterations= 20, loocv_path, save_file=True)
+    # load data
+    print "load data..."
+    data = get_ratings_data()
+    print "build RDDs..."
+    cust_tag_bridge_rdd = create_cust_tag_bridge_rdd(sc, data)
+    clean_data_rdd = create_clean_data_rdd(sc, data, cust_tag_bridge_rdd) 
+    X, Y = split_data(clean_data_rdd)
+
+    print "unpersisting initial data RDDs..."
+    cust_tag_bridge_rdd.unpersist()
+    clean_data_rdd.unpersist()
+
+
+    get_loocv_train_test_errors(sc, X, Y , alpha = 0.1, rank_ = 16, n_iterations= 20, file_path=loocv_path, save_file=True, return_errors=False)
 
     print "stoping spark context..."
     sc.stop()

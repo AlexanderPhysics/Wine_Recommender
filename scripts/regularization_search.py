@@ -12,18 +12,14 @@ from pyspark.mllib.recommendation import ALS
 import math
 
 
-from loocv import get_ratings_data, 
-                  create_cust_tag_bridge_rdd, 
-                  create_clean_data_rdd, 
-                  split_data, 
-                  get_loocv_train_test_errors
+from loocv import get_ratings_data, create_cust_tag_bridge_rdd, create_clean_data_rdd, split_data, get_loocv_train_test_errors
 
-def get_regularization_results(sc, grid_search_path, rank, n_iterations, reg_parameters):
+def get_regularization_results(sc, X, Y , grid_search_path, rank, n_iterations, reg_parameters):
     train_errors_dict = dict()
     test_errors_dict = dict()
     for param in reg_parameters:
         print "Starting {}".format(param)
-        train_errors, test_errors = get_loocv_train_test_errors(sc, param, rank, n_iterations, save_file=False)
+        train_errors, test_errors = get_loocv_train_test_errors(sc, X, Y , param, rank, n_iterations, file_path=grid_search_path, save_file=False)
         train_errors_dict[param] = train_errors
         test_errors_dict[param] = test_errors
 
@@ -42,14 +38,30 @@ if __name__ == '__main__':
     print "SparkContext: {}".format(sc)
 
     reg_parameters = [1.0, 0.1, 0.01, 0.001]
-    rank_=16
+    rank=16
     n_iterations=20
+
+    # load data
+    print "load data..."
+    data = get_ratings_data()
+    print "build RDDs..."
+    cust_tag_bridge_rdd = create_cust_tag_bridge_rdd(sc, data)
+    clean_data_rdd = create_clean_data_rdd(sc, data, cust_tag_bridge_rdd) 
+    X, Y = split_data(clean_data_rdd)
+
+    print "unpersisting initial data RDDs..."
+    cust_tag_bridge_rdd.unpersist()
+    clean_data_rdd.unpersist()
+
 
     print "Start get_regularization_results..."
     start = time()
-    get_regularization_results(sc, grid_search_path, rank, n_iterations, reg_parameters)
+    get_regularization_results(sc, X, Y , grid_search_path, rank, n_iterations, reg_parameters)
     end = time()
     print "Time Elapsed = {}".format(end - start)
+
+    print "stoping spark context..."
+    sc.stop()
 
 
 
