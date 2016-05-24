@@ -205,6 +205,7 @@ def get_top_rec_varietals(clean_user_recs):
     
     # { custumer tag : (productKey , productID, Appellation, Varietal, Vineyard, wine type, Rating  ) }
     user_recs_dicts = clean_user_recs.collect()
+    varietals = [row[1][3] for row in user_recs_dicts]
     
     var_count = Counter(varietals)
     
@@ -239,9 +240,8 @@ def get_top_reds_and_whites(clean_user_recs):
 def get_user_ids_for_recommendations(cust_tag_bridge_rdd):
     '''This function returns user ids from the cust_tag_bridge_rdd. 
        For now, it only return the first user_id in the rdd.'''
-    # NOTE: results are inside of a list !!!!!!
-    user_id = cust_tag_bridge_rdd.map(lambda row: row[1]).take(1)[0]
-    return user_id
+    # results are inside of a list 
+    return cust_tag_bridge_rdd.map(lambda row: row[1]).collect()
 
 def check_top_varietal_wine_count(most_common_varietals):
     '''Checks if top variatls have at lease 3 wines'''
@@ -254,6 +254,7 @@ def check_top_varietal_wine_count(most_common_varietals):
 
 if __name__ == '__main__':
 
+    start_rs = time()
     # data files
     home = "/Users/Alexander/Wine_Recommender/data/"
     ratings_path = home + "spark_ready_data.pkl"
@@ -264,60 +265,91 @@ if __name__ == '__main__':
     n_local_cpus = 3
     # value validated in Spark_Recommendation_Model_Validation notebook
     rating_threshold = 9
+    n_varietials = 3
 
     print "get_spark_context..."
     # get sparkContext 
-    sc = get_spark_context(n_cups = n_local_cpus, local = True, remote_cluster_path=None)
+    sc = get_spark_context(n_cups = n_local_cpus, 
+                           local = True, 
+                           remote_cluster_path=None)
 
     print "get_clean_data_rdd..."
-    clean_data_rdd, cust_tag_bridge_rdd = get_clean_data_rdd(sc, return_cust_brige_rdd = True)
+    clean_data_rdd, cust_tag_bridge_rdd = get_clean_data_rdd(sc, 
+                                                             return_cust_brige_rdd = True)
 
-    #print 'get_trained_model...'
-    #Model can be saved to a file only once; otherwise, spark will throw an error 
-    #fitted_model = get_trained_model(sc, ratings_path, save_model_path=model_path)
+    print 'get_trained_model...'
+    # Model can be saved to a file only once; otherwise, spark will throw an error 
+    fitted_model = get_trained_model(sc, 
+                                     ratings_path, 
+                                     save_model_path=model_path)
 
-    print "load_model..."
-    fitted_model = load_model(sc, model_path)
+    # print "load_model..."
+    # fitted_model = load_model(sc, 
+    #                           model_path)
 
-    # The below code can be put through a for loop in order to iterate through all user ids
-    # as a demo, it only return the first user_id in the rdd
+ 
+
     print "get_user_ids_for_recommendations..."
-    user_id = get_user_ids_for_recommendations(cust_tag_bridge_rdd)
+    user_ids = get_user_ids_for_recommendations(cust_tag_bridge_rdd)
 
-    # all previously unpurchased wines will be passed into the model for a predicted rating 
-    print "get_userID_moiveID_pairs..."
-    unpurchased_wines = get_userID_moiveID_pairs(sc, user_id, clean_data_rdd)
+    r_w_cnt = 0
+    results = []
+    for i, user_id in enumerate(user_ids[0:3]):
 
-    print "get_user_recommendations..."
-    user_recs = get_user_recommendations(fitted_model, unpurchased_wines)
+        loop_start = time()
+        #all previously unpurchased wines will be passed into the model for a predicted rating 
+        #print "get_userID_moiveID_pairs..."
+        unpurchased_wines = get_userID_moiveID_pairs(sc, 
+                                                 user_id, 
+                                                 clean_data_rdd)
 
-    clean_user_recs = format_user_recs(user_recs, cust_tag_bridge_rdd, products_path, rating_threshold)
+        #print "get_user_recommendations..."
+        user_recs = get_user_recommendations(fitted_model, 
+                                         unpurchased_wines)
 
-    # Curate Recommendations into Varietal Sub-Genres
-    # Return the top 3 rated wines from the the top 3 most recommended varietals. 
-    # If there arn't at least 3 wines form 3 varietals,
-    # Then return the top 5 reds and the top 5 whites. 
+        clean_user_recs = format_user_recs(user_recs, 
+                                       cust_tag_bridge_rdd, 
+                                       products_path, 
+                                       rating_threshold)
 
-    # check for 3 wines, 3 varieatls condition
+        # Curate Recommendations into Varietal Sub-Genres
+        # Return the top 3 rated wines from the the top 3 most recommended varietals. 
+        # If there aren't at least 3 wines form 3 varietals,
+        # Then return the top 5 reds and the top 5 whitesn (though this shouldn't be a problem). 
 
-    # format -> (custumer tag,  (productKey , productID, Appellation, Varietal, Vineyard, wine type, Rating  ) )
-    user_recs_tups = clean_user_recs.collect()
-    varietals = [row[1][3] for row in user_recs_tups]
-    var_count = Counter(varietals)
-    most_common_varietals = var_count.most_common()[0:3]
+        # check for 3 wines, 3 varieatls condition
 
-    # check 1 -->  varietal count
-    # check 2 --> top 3 varietals have at least 3 wines to choose from
-    if len(var_count) >= 3 and check_top_varietal_wine_count(most_common_varietals) == 3:
-        print "get_top_rec_varietals..."
-        final_recs = get_top_rec_varietals(clean_user_recs)
-    else:
-        print "get_top_reds_and_whites..."
-        final_recs = get_top_reds_and_whites(clean_user_recs)
+        # format -> (custumer tag,  (productKey , productID, Appellation, Varietal, Vineyard, wine type, Rating  ) )
+        user_recs_tups = clean_user_recs.collect()
+        varietals = [row[1][3] for row in user_recs_tups]
+        var_count = Counter(varietals)
+        most_common_varietals = var_count.most_common()[:n_varietials]
+
+        # check 1 -->  varietal count
+        # check 2 --> top 3 varietals have at least 3 wines to choose from
+        if len(var_count) >= n_varietials and check_top_varietal_wine_count(most_common_varietals) == n_varietials:
+            #print "get_top_rec_varietals..."
+            final_recs = get_top_rec_varietals(clean_user_recs)
+        else:
+            #print "get_top_reds_and_whites..."
+            r_w_cnt += 1
+            final_recs = get_top_reds_and_whites(clean_user_recs)
+        results.append(final_recs)
+
+        if i % 1 == 0:
+            loop_end = time()
+            print "User {}, Time Elapsed {:.3} mins".format(i, (loop_end - loop_start)/60)
 
     print "saving final_recs to file..."
     # save recommendation results to file
-    cPickle.dump(final_recs, open(rec_results_path, 'a'))
+    cPickle.dump(results, open(rec_results_path, 'w'))
+
+
+    print  "stoping spark context..."
+    sc.stop()
+    end_rc = time()
+    print "Red_White_Rec_Counter = {}".format(r_w_cnt)
+    print "Total Time Elapsed for RS = {:.4} mins".format((end_rc - start_rs)/60)
 
 
 
