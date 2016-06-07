@@ -264,7 +264,7 @@ if __name__ == '__main__':
     model_path = "/Users/Alexander/Wine_Recommender/models/spark_recommender"
     n_local_cpus = 3
     # value validated in Spark_Recommendation_Model_Validation notebook
-    rating_threshold = 9
+    rating_threshold = 7
     n_varietials = 3
 
     print "get_spark_context..."
